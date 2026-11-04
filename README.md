@@ -10,6 +10,33 @@ Repo: https://github.com/Flayute/UMA-Mercure.git
 
 ![Dashboard de UMA Mercure](docs/screenshot.png)
 
+## Qué es y qué no es
+
+UMA — *Universal Music Analyser* — es una plataforma experimental
+auto-hosteada que explora la intersección entre fonotecas personales, IA
+local, agentes modulares y sistemas cognitivos. Forma parte de CAMS
+(*Cognitive Adaptive Modular System*), un entorno de investigación personal
+sobre análisis musical, interacción y decisión asistida por IA.
+
+El proyecto está en desarrollo activo: no pretende ser un servicio de
+streaming production-ready ni competir con nadie. Es un laboratorio que, de
+paso, suena bien.
+
+Tu entorno no debería ser una dependencia invisible. Lo que se ejecuta en
+cualquier Linux y lo que cada uno adapta:
+
+- Fonoteca: cualquier carpeta local o montada (`MUSIC_DIR` en `api/.env`).
+- LLM del chat: local (llama-server), remoto (cualquier endpoint
+  OpenAI-compatible) o ausente — la radio funciona igual sin el chat.
+- Acceso: HTTP en LAN basta; Tailscale Serve solo es necesario para HTTPS,
+  que a su vez solo es necesario para instalar la PWA. Cualquier certificado
+  vale, no solo el de Tailscale.
+- El cazador de canciones del móvil (centinela yt-dlp) es un complemento
+  opcional: la webapp no depende de él y no es necesario para el flujo web.
+
+Las rutas y endpoints reales de cada instalación viven en `api/.env`, nunca
+en el código.
+
 ## Créditos
 
 El esqueleto principal del proyecto fue creado por Antigravity hace unos meses.
