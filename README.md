@@ -18,12 +18,7 @@ local, agentes modulares y sistemas cognitivos. Forma parte de CAMS
 (*Cognitive Adaptive Modular System*), un entorno de investigación personal
 sobre análisis musical, interacción y decisión asistida por IA.
 
-El proyecto está en desarrollo activo: no pretende ser un servicio de
-streaming production-ready ni competir con nadie. Es un laboratorio que, de
-paso, suena bien.
-
-Tu entorno no debería ser una dependencia invisible. Lo que se ejecuta en
-cualquier Linux y lo que cada uno adapta:
+Adaptable a tu entorno:
 
 - Fonoteca: cualquier carpeta local o montada (`MUSIC_DIR` en `api/.env`).
 - LLM del chat: local (llama-server), remoto (cualquier endpoint
