@@ -1,0 +1,8 @@
+# Dependencias de scripts/analyze_library.py (analizador masivo de metadatos)
+# Instalar en un venv dedicado: python3 -m venv scripts/.venv-analyzer
+#   scripts/.venv-analyzer/bin/pip install -r scripts/requirements-analyzer.txt
+numpy
+librosa
+mutagen
+pandas
+soundfile

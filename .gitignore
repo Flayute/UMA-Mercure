@@ -1,5 +1,6 @@
 # Entornos y dependencias
 api/venv/
+scripts/.venv-analyzer/
 web/node_modules/
 __pycache__/
 *.pyc

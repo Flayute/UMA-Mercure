@@ -37,7 +37,8 @@ documentación actual.
 UMA-Mercure/
 ├── api/          # FastAPI: main.py, core/config.py, services/ (sesión, LLM, MPD), models/
 ├── web/          # React + vite (fuente en src/, build en dist/, servido por FastAPI)
-├── scripts/      # regen_db.py, fill_durations.py, hdd_watcher.sh, import_legacy_db.py
+├── scripts/      # regen_db.py, fill_durations.py, hdd_watcher.sh, import_legacy_db.py,
+│                 # analyze_library.py (analizador masivo BPM/clave/energía)
 ├── data/         # uma.db (SQLite WAL) — no versionado, se regenera
 └── deploy/       # units systemd de ejemplo
 ```
@@ -90,6 +91,25 @@ cd api && ../api/venv/bin/python3 ../scripts/fill_durations.py && cd ..  # durac
 
 `regen_db.py` necesita MPD corriendo con la música indexada (socket 6600,
 `mpc update`). Las duraciones faltantes usan fallback de 300 s.
+
+### Analizador masivo de BPM, clave y energía
+
+`scripts/analyze_library.py` analiza la fonoteca completa con librosa y escribe
+BPM, clave (nota + modo + notación Camelot para mezclas compatibles) y energía.
+Instala sus dependencias en un venv dedicado:
+
+```bash
+python3 -m venv scripts/.venv-analyzer
+scripts/.venv-analyzer/bin/pip install -r scripts/requirements-analyzer.txt
+scripts/.venv-analyzer/bin/python3 scripts/analyze_library.py --folder <musica> --resume
+```
+
+Por defecto solo analiza y registra (SQLite + CSV, con `--resume` para
+continuar donde se quedó). Las operaciones destructivas son flags explícitos:
+`--rename` limpia nombres de YouTube, `--convert` pasa formatos raros a MP3 320k
+(borra el original tras convertir), `--tags` escribe BPM/clave/energía dentro de
+los archivos (lo que Serato/Mixxx leen al instante). `--dry-run` analiza sin
+tocar nada.
 
 ### Units systemd (usuario, no root)
 
