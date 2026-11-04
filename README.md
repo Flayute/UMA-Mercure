@@ -1,66 +1,182 @@
-# 🎵 UMA Mercure: Sistema Aural Soberano
+# UMA Mercure
 
-UMA (Universal Music Agent) es el componente de inteligencia ambiental del ecosistema Mercure. Diseñado para ofrecer una experiencia musical privada, local y gobernada por IA, UMA transforma una biblioteca masiva de archivos físicos en un servicio de streaming personal inteligente.
+Radio personal autohosteada: una webapp que sirve tu fonoteca (14k+ pistas) en
+streaming a cualquier dispositivo de tu red, con cola de reproducción, sesiones
+independientes por dispositivo y un DJ de IA local. Corre en una Raspberry Pi
+(ou cualquier máquina Linux) y se usa desde el navegador — incluye PWA
+instalable en Android.
 
----
+Repo: https://github.com/Flayute/UMA-Mercure.git
 
-## 🚀 Hitos Alcanzados (Fase de Sintonización)
+## Cómo funciona
 
-- **Indexación Masiva:** Integración exitosa de **14.179 canciones** desde disco externo Seagate via symlinks optimizados.
-- **Curación Inteligente (9B Power):** Implementación de un agente Qwen 9B con libertad de razonamiento ("Thinking Mode") para descubrimiento musical.
-- **Arquitectura de Doble Capa:**
-    - **Control Directo:** Formulario soberano para selección técnica (BPM, Género, Novedad).
-    - **Visor de Razonamiento:** Ventana dedicada estilo CAMS para ver las propuestas y el pensamiento de la IA.
-- **Algoritmo de Novedad:** Priorización automática de temas con bajo `play_count` para "limpiar" y redescubrir la biblioteca.
-- **Sincronización en Tiempo Real:** Visor de cola de reproducción (`Current Queue`) sincronizado con MPD cada 3s.
-
----
-
-## 🛠️ Arquitectura Mercure
+- Backend FastAPI (puerto 8000) que sirve la UI React compilada, la API y el
+  streaming de archivos reales con HTTP Range (seek instantáneo).
+- Cola y reloj de reproducción en SQLite. Un ticker del servidor avanza las
+  pistas; todos los dispositivos sincronizan su `<audio>` contra ese reloj.
+- Cada navegador es su propio reproductor: no hay un "destino" de audio, el
+  sonido sale por el dispositivo que escucha.
+- Sesiones: por defecto todos comparten la sesión `main` (una radio común).
+  El botón "Crear sesión propia" bifurca una sesión aislada por dispositivo.
+- Un LLM (llama-server, local o en otra máquina) responde al chat de música:
+  "pon algo de Gramatik", "playlist electrónica de 20 canciones", etc.
+- MPD es opcional y queda solo como reproductor local del Pi (altavoz/Bluetooth
+  vía `mpc`); el flujo web no lo usa.
 
 ```text
 UMA-Mercure/
-├── api/                # Backend FastAPI (Gateway entre Web, IA y MPD)
-│   ├── core/           # Configuración y seguridad
-│   ├── services/       # Lógica de MPD, Agente LLM y Base de Datos
-│   └── models/         # Modelos GGUF de IA y Esquemas SQL
-├── web/                # Frontend React (Rich Aesthetics Dashboard)
-│   ├── src/components/ # Player, Chat, Queue Viewer, Reasoning Viewer
-│   └── index.css       # Diseño Dark Mode Premium (Glassmorphism)
-├── scripts/            # Herramientas de migración y re-mapeo de rutas
-├── data/               # uma.db (Cerebro de metadatos: 14k+ registros)
-└── deploy/             # Scripts de despliegue para Raspberry Pi 500
+├── api/          # FastAPI: main.py, core/config.py, services/ (sesión, LLM, MPD), models/
+├── web/          # React + vite (fuente en src/, build en dist/, servido por FastAPI)
+├── scripts/      # regen_db.py, fill_durations.py, hdd_watcher.sh, import_legacy_db.py
+├── data/         # uma.db (SQLite WAL) — no versionado, se regenera
+└── deploy/       # units systemd de ejemplo
 ```
 
----
+## Requisitos
 
-## 🧠 Decisiones Técnicas
+- Linux (probado en Raspberry Pi OS, Python 3.13).
+- Python 3 + `python3 -m venv`; Node 20 (para construir la UI).
+- `ffmpeg` (transcode on-the-fly de `.wma/.ape/.wv/.w64`).
+- Música en un directorio accesible (NTFS funciona con `ntfs3`).
+- Opcional: Tailscale (HTTPS + acceso remoto + PWA), MPD, llama-server.
 
-| Componente | Razón |
+## Instalación
+
+```bash
+git clone https://github.com/Flayute/UMA-Mercure.git
+cd UMA-Mercure
+
+# Backend
+python3 -m venv api/venv
+api/venv/bin/pip install -r api/requirements.txt
+
+# Frontend
+cd web && npm install && npm run build && cd ..   # genera web/dist/
+```
+
+## Configuración
+
+Crea `api/.env` (no se versiona; los defaults de `api/core/config.py` son
+placeholders):
+
+```env
+LLAMA_REMOTE_URL="http://<host-llm>:8081"   # llama-server OpenAI-compatible
+LLAMA_MODE=remote                            # local | remote | auto
+MUSIC_DIR="/media/<usuario>/Seagate Expansion Drive"   # raíz de la fonoteca
+```
+
+Otros ajustes opcionales en el mismo archivo: `MPD_HOST`, `MPD_PORT`,
+`DB_URL` (default `sqlite:///../data/uma.db`, relativo a `api/`).
+
+### Base de datos de metadatos
+
+`data/uma.db` no viene en el repo; se construye en dos pasos (con la música
+montada):
+
+```bash
+cd api && ../api/venv/bin/python3 ../scripts/regen_db.py && cd ..   # catálogo: recorre MUSIC_DIR + tags MPD
+cd api && ../api/venv/bin/python3 ../scripts/fill_durations.py && cd ..  # duraciones con ffprobe (~30 min en 14k pistas)
+```
+
+`regen_db.py` necesita MPD corriendo con la música indexada (socket 6600,
+`mpc update`). Las duraciones faltantes usan fallback de 300 s.
+
+### Units systemd (usuario, no root)
+
+Ejemplos en `deploy/systemd/`. Copia a `~/.config/systemd/user/`, ajusta rutas
+y usuario, y habilita linger para que sobrevivan sin sesión de login:
+
+```bash
+systemctl --user daemon-reload
+systemctl --user enable --now uma-api
+systemctl --user enable --now uma-hdd-watcher.timer   # watchdog del disco externo
+loginctl enable-linger $USER
+```
+
+Nota: todas las units son `--user`; `sudo systemctl restart mpd` fallará si
+tienes el unit de sistema disabled a propósito.
+
+### HDD externo (si tu música está en uno)
+
+- La ruta de montaje debe coincidir EXACTAMENTE con `MUSIC_DIR`.
+- Con NTFS: `sudo mount -t ntfs3 -o rw,nosuid,nodev,relatime,uid=1000,gid=1000,iocharset=utf8 /dev/sdX1 "<ruta>"`
+  y una entrada en fstab por `UUID=...` con espacios escapados (`\040`) y `nofail`.
+- El watchdog (`scripts/hdd_watcher.sh`, vía timer de 60 s) detecta el disco al
+  conectarlo, reindexa MPD carpeta a carpeta y registra estado en
+  `data/.hdd_state`. La web sigue funcionando con el disco fuera (catálogo en
+  SQLite); solo se interrumpe el streaming.
+
+### Acceso remoto y HTTPS (recomendado)
+
+```bash
+sudo tailscale set --operator=$USER
+tailscale serve --bg 8000
+```
+
+Tailscale da un certificado Let's Encrypt para `https://<host>.<tailnet>.ts.net`.
+HTTPS es obligatorio para instalar la PWA (los navegadores no registran service
+workers en http). El WebSocket atraviesa el proxy sin configuración extra.
+
+## Uso
+
+Abre `http://<maquina>:8000/` (local) o la URL HTTPS del tailnet.
+
+| Sección | Qué hace |
 |---|---|
-| **MPD + Lame** | Streaming MP3 universal para móviles y bajo consumo (<20MB RAM). |
-| **SQLite + SQLAlchemy** | Persistencia de metadatos (BPM, Mood) para búsquedas instantáneas. |
-| **Flex-Search Engine** | Búsqueda multicanal (Etiquetas + Rutas + Mood) para cubrir temas sin tags. |
-| **PlayCount Tracker** | Sistema de memoria persistente para evitar la fatiga auditiva. |
-| **Reasoning Viewer** | Desacoplamiento del pensamiento de la IA del control del player para estabilidad. |
+| Reproductor | Pista actual, barra de progreso (clic = seek), ⏮ ⏸ ⏭ ⏹, volumen local. El audio empieza tras el primer clic/gesto en la página (política de autoplay del navegador). |
+| Crear sesión propia | Bifurca una sesión independiente para este dispositivo: copia la cola y la posición; nadie más afecta a lo que escuchas. "Volver a la radio común" te devuelve a `main`. |
+| Catálogo | Búsqueda sobre el catálogo SQLite; clic en una fila la reproduce; "+ cola" añade una pista; "A la cola (N)" añade las pistas cargadas; "Radio completa" pone toda la biblioteca en aleatorio. |
+| Cola de Reproducción | La cola de tu sesión; clic en una fila para saltar a esa pista. |
+| DJ Inteligente | Chat con el LLM: "pon X", "siguiente", "pausa", "playlist de N temas <género>", "radio completa". Opera sobre la sesión común `main`. |
+| Generador de Listas | Formulario por Nº de canciones / género / BPM / novedad; prioriza temas poco escuchados. |
+| Visor de Razonamiento | Respuestas y propuestas del DJ de IA. |
+| Estadísticas | Totales, temas más reproducidos, estado del disco. |
 
----
+PWA en Android: abre la URL HTTPS en Chrome o Firefox ≥136 → menú →
+"Instalar aplicación / Instalar". Con MediaSession, la pista sigue sonando con
+la pantalla bloqueada en navegadores que lo permiten (en Firefox Android activa
+el permiso de sitio "Reproducción en segundo plano").
 
-## 🗺️ Roadmap Completado
+Códecs: mp3/flac/ogg/opus/m4a suenan nativos en el navegador; wma/ape/wv los
+transcode la API a MP3 al vuelo (sin seek en esos archivos). Pista ilegible o
+corrupta: el reproductor la salta automáticamente.
 
-- [x] Indexación y reparación de rutas para 14k temas.
-- [x] Backend FastAPI con control de reproducción y WebSocket.
-- [x] Agente LLM 9B con soporte de Razonamiento (Thinking).
-- [x] Frontend React Dashboard con diseño premium.
-- [x] Generador de Listas Inteligente con prioridad de novedad.
-- [x] Visor de Respuestas dedicado (estilo CAMS).
-- [x] Visor de Cola de Reproducción en tiempo real.
-- [x] Plan de despliegue automatizado para Raspberry Pi 500.
+### API (si quieres integrar desde fuera)
 
----
+| Endpoint | Notas |
+|---|---|
+| `GET /api/session?sid=` | snapshot: state, file, title, duration, position, queue_index, queue_len |
+| `GET /api/session/queue?sid=` | cola de la sesión + current_index |
+| `POST /api/session/play_file {file}` / `add_files {files}` / `shuffle_all` | carga de cola |
+| `POST /api/session/play|pause|stop|next|previous|seek {seconds}|play_index {index}` | transporte |
+| `POST /api/session/fork?sid=` / `drop?sid=` | sesiones independientes |
+| `GET /api/sessions` | sesiones activas |
+| `GET /api/music/stream?file=...` | audio con Range; rutas fuera de MUSIC_DIR → 400 |
+| `WS /ws/status?sid=` | snapshot de sesión cada segundo |
+| `POST /api/chat {message}` | DJ de IA (intents → sesión) |
 
-> "UMA Mercure: Porque tu música es tuya, y tu DJ también." 🛡️⚗️🎵
+## Solución de problemas
 
----
+- Suena pero no se escucha en el navegador: el audio no arranca hasta el primer clic/gesto en la página (política de autoplay); revisa el volumen local (slider del Reproductor).
+- La pista no avanza sola: mira el ticker en `journalctl --user -u uma-api`.
+- `database is locked`: el motor usa WAL + busy_timeout; si aparece con
+  scripts, no los ejecutes mientras la API escribe (o para la API un momento).
+- PWA no se instala: estás en http — usa la URL HTTPS de tailscale serve.
+- Pista en bucle: "Radio completa" deja la cola entera en aleatorio; reproducir
+  una pista individual pone cola de 1 sin repeat.
+- La web va lenta en seek: seek es server-side vía Range, instantáneo en
+  formatos nativos; los transcoded (wma/ape/wv) no tienen seek.
 
-**Documentación de la UI y operación (actualizada 2026-11-04): ver [README-UI.md](README-UI.md).**
+## Seguridad
+
+La API no tiene autenticación: cualquiera que reacha el puerto puede controlar
+la radio y listar tu catálogo. Diseñada para red privada (Tailscale o LAN):
+no expongas el 8000 a internet sin poner auth o un proxy con acceso restringido.
+El streaming está limitado al directorio `MUSIC_DIR` (path traversal bloqueado)
+y `api/.env` queda fuera del git.
+
+## Documentación técnica
+
+Detalles de arquitectura, endpoints internos y trampas conocidas:
+[README-UI.md](README-UI.md). Informe de diagnóstico del 2026-11-04:
+[INFORME-2026-11-04.md](INFORME-2026-11-04.md).
