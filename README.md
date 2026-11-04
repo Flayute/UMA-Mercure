@@ -38,7 +38,8 @@ UMA-Mercure/
 ├── api/          # FastAPI: main.py, core/config.py, services/ (sesión, LLM, MPD), models/
 ├── web/          # React + vite (fuente en src/, build en dist/, servido por FastAPI)
 ├── scripts/      # regen_db.py, fill_durations.py, hdd_watcher.sh, import_legacy_db.py,
-│                 # analyze_library.py (analizador masivo BPM/clave/energía)
+│                 # analyze_library.py (analizador masivo BPM/clave/energía),
+│                 # fix_artist_title.py (repara artista/título cruzados)
 ├── data/         # uma.db (SQLite WAL) — no versionado, se regenera
 └── deploy/       # units systemd de ejemplo
 ```
@@ -110,6 +111,21 @@ continuar donde se quedó). Las operaciones destructivas son flags explícitos:
 (borra el original tras convertir), `--tags` escribe BPM/clave/energía dentro de
 los archivos (lo que Serato/Mixxx leen al instante). `--dry-run` analiza sin
 tocar nada.
+
+### Reparación de artista/título cruzados
+
+Si la fonoteca proviene en parte de descargas de YouTube, los nombres originales
+(`Canal - Título`) y los export del historial (`Título - Canal`) pueden acabar
+cruzados en la base de datos: artista con el nombre del canal y título repetido.
+`scripts/fix_artist_title.py` re-deriva ambos campos de los tags ID3/Vorbis
+reales de cada fichero (mutagen) y, si no hay tags, del nombre del fichero en
+disco. Por defecto solo informa; `--apply` escribe en la DB (no toca los
+ficheros de música):
+
+```bash
+scripts/.venv-analyzer/bin/python3 scripts/fix_artist_title.py --music-root <musica>
+scripts/.venv-analyzer/bin/python3 scripts/fix_artist_title.py --music-root <musica> --apply
+```
 
 ### Units systemd (usuario, no root)
 

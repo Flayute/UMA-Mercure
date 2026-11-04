@@ -11,8 +11,8 @@ La reparación re-deriva artist/title de los tags ID3/Vorbis reales del fichero
 correcto "Artista - Título"). Por defecto solo informa; --apply escribe.
 
 Uso:
-  python3 scripts/fix_artist_title.py --dry-run
-  python3 scripts/fix_artist_title.py --apply [--write-tags]
+  python3 scripts/fix_artist_title.py            # dry-run (informativo)
+  python3 scripts/fix_artist_title.py --apply    # escribe en la DB
 Dependencias: mutagen (usa el venv del analizador o el de la API con mutagen).
 """
 import argparse
