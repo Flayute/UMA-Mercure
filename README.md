@@ -3,7 +3,7 @@
 Radio personal autohosteada: una webapp que sirve tu fonoteca (14k+ pistas) en
 streaming a cualquier dispositivo de tu red, con cola de reproducción, sesiones
 independientes por dispositivo y un DJ de IA local. Corre en una Raspberry Pi
-(ou cualquier máquina Linux) y se usa desde el navegador — incluye PWA
+(o cualquier máquina Linux) y se usa desde el navegador — incluye PWA
 instalable en Android.
 
 Repo: https://github.com/Flayute/UMA-Mercure.git
@@ -148,7 +148,7 @@ corrupta: el reproductor la salta automáticamente.
 | `GET /api/session?sid=` | snapshot: state, file, title, duration, position, queue_index, queue_len |
 | `GET /api/session/queue?sid=` | cola de la sesión + current_index |
 | `POST /api/session/play_file {file}` / `add_files {files}` / `shuffle_all` | carga de cola |
-| `POST /api/session/play|pause|stop|next|previous|seek {seconds}|play_index {index}` | transporte |
+| `POST /api/session/play`, `pause`, `stop`, `next`, `previous`, `seek {seconds}`, `play_index {index}` | transporte |
 | `POST /api/session/fork?sid=` / `drop?sid=` | sesiones independientes |
 | `GET /api/sessions` | sesiones activas |
 | `GET /api/music/stream?file=...` | audio con Range; rutas fuera de MUSIC_DIR → 400 |
@@ -169,7 +169,7 @@ corrupta: el reproductor la salta automáticamente.
 
 ## Seguridad
 
-La API no tiene autenticación: cualquiera que reacha el puerto puede controlar
+La API no tiene autenticación: cualquiera que llegue al puerto puede controlar
 la radio y listar tu catálogo. Diseñada para red privada (Tailscale o LAN):
 no expongas el 8000 a internet sin poner auth o un proxy con acceso restringido.
 El streaming está limitado al directorio `MUSIC_DIR` (path traversal bloqueado)
