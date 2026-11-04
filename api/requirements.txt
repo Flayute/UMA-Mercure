@@ -1,0 +1,8 @@
+fastapi
+uvicorn
+python-mpd2
+pydantic
+pydantic-settings
+sqlalchemy
+requests
+websockets

@@ -1,0 +1,20 @@
+# Entornos y dependencias
+api/venv/
+web/node_modules/
+__pycache__/
+*.pyc
+
+# Build (se regenera con npm run build)
+web/dist/
+
+# Datos locales: la DB se regenera con regen_db.py + fill_durations.py
+api/.env
+data/uma.db
+data/uma.db-wal
+data/uma.db-shm
+data/uma.db.bak-*
+data/*.log
+data/.hdd_state
+
+# Backups históricos
+*.bak-*

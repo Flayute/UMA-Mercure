@@ -1,0 +1,16 @@
+{
+  "name": "UMA Mercure — DJ Inteligente",
+  "short_name": "UMA Mercure",
+  "description": "Radio autónoma con IA: catálogo de 14.860 pistas, cola compartida y streaming multi-dispositivo.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "theme_color": "#0a0a0f",
+  "background_color": "#0a0a0f",
+  "icons": [
+    { "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "/icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

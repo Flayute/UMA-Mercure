@@ -1,0 +1,16 @@
+[Unit]
+Description=UMA Mercure - Llama Brain (LLM)
+After=network.target
+
+[Service]
+Type=simple
+User=<usuario>
+WorkingDirectory=/home/<usuario>/UMA-Mercure/api
+ExecStart=/home/<usuario>/llama-cpp-official/build/bin/llama-server \
+    -m /home/<usuario>/UMA-Mercure/api/models/llama-3.2-3b-instruct-q4_k_m.gguf \
+    -c 4096 --port 8080 -ngl 0 -t 4
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target
