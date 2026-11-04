@@ -10,6 +10,14 @@ Repo: https://github.com/Flayute/UMA-Mercure.git
 
 ![Dashboard de UMA Mercure](docs/screenshot.png)
 
+## Créditos
+
+El esqueleto principal del proyecto fue creado por Antigravity hace unos meses.
+Qwen 3.8 Flash Next, a través del motor Strata, se ha encargado de darle la
+vuelta al código y convertirlo en lo que es ahora: la arquitectura de sesión
+directa, las sesiones independientes, el streaming con Range, la PWA y la
+documentación actual.
+
 ## Cómo funciona
 
 - Backend FastAPI (puerto 8000) que sirve la UI React compilada, la API y el
