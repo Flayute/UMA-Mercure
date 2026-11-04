@@ -172,10 +172,10 @@ export default function Player({ status, current, connected, sid = 'main', onSid
           {sid !== 'main' ? (
             <>
               <span className="status-badge" style={{ borderColor: 'var(--accent)' }}>Sesión propia</span>
-              <button className="ctrl-btn" style={{ fontSize: '0.72rem', padding: '6px 10px' }} onClick={() => onSid?.('main')} title="Abandona la sesión paralela y vuelve a la reproducción compartida">Volver a la radio común</button>
+              <button style={{ background: 'var(--bg-card)', border: '1px solid var(--border)', color: 'var(--text-primary)', borderRadius: '100px', padding: '6px 12px', fontSize: '0.72rem', cursor: 'pointer', whiteSpace: 'nowrap', flex: 'none' }} onClick={() => onSid?.('main')} title="Abandona la sesión paralela y vuelve a la reproducción compartida">Volver a la radio común</button>
             </>
           ) : (
-            <button className="ctrl-btn" style={{ fontSize: '0.72rem', padding: '6px 10px' }} onClick={fork} title="Crea una reproducción independiente para este dispositivo: copia la cola actual y a partir de ahí nadie te cambia la música">Crear sesión propia</button>
+            <button style={{ background: 'var(--bg-card)', border: '1px solid var(--border)', color: 'var(--text-primary)', borderRadius: '100px', padding: '6px 12px', fontSize: '0.72rem', cursor: 'pointer', whiteSpace: 'nowrap', flex: 'none' }} onClick={fork} title="Crea una reproducción independiente para este dispositivo: copia la cola actual y a partir de ahí nadie te cambia la música">Crear sesión propia</button>
           )}
           <div className="status-badge">
             <span className={`status-dot ${isPlaying ? '' : 'offline'}`} />

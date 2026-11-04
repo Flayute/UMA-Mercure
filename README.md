@@ -8,6 +8,8 @@ instalable en Android.
 
 Repo: https://github.com/Flayute/UMA-Mercure.git
 
+![Dashboard de UMA Mercure](docs/screenshot.png)
+
 ## Cómo funciona
 
 - Backend FastAPI (puerto 8000) que sirve la UI React compilada, la API y el

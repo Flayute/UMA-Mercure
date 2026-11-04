@@ -265,8 +265,8 @@ body {
 
 .progress-bar {
   width: 100%;
-  height: 4px;
-  background: var(--bg-primary);
+  height: 5px;
+  background: rgba(255, 255, 255, 0.12);
   border-radius: 100px;
   overflow: hidden;
 }
