@@ -6,7 +6,7 @@ import subprocess
 from pathlib import Path
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Body, Request
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import JSONResponse, FileResponse, StreamingResponse
+from fastapi.responses import JSONResponse, FileResponse, StreamingResponse, Response
 from fastapi.middleware.cors import CORSMiddleware
 from services.mpd_client import MPDService
 from services.llm_agent import LLMAgent
@@ -232,6 +232,32 @@ def _sid(sid: str = "main") -> str:
 def session_snapshot(sid: str = "main"):
     return session_service.snapshot(_sid(sid))
 
+def _esc(s: str) -> str:
+    return (s or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+@app.get("/api/session.rss")
+def session_rss(request: Request, sid: str = "main"):
+    """Feed RSS mínimo con la pista actual — para widgets nativos de Android."""
+    base_url = str(request.base_url)
+    snap = session_service.snapshot(_sid(sid))
+    playing = snap.get("state") == "play"
+    label = f"{snap.get('artist') or '?'} — {snap.get('title') or snap.get('file') or 'sin pista'}"
+    desc = (f"{'SONANDO' if playing else snap.get('state', '?').upper()} · "
+            f"{int(snap.get('position') or 0)}s / {int(snap.get('duration') or 0)}s · "
+            f"cola {snap.get('queue_index', 0)}/{snap.get('queue_len', 0)}")
+    xml = (
+        '<?xml version="1.0" encoding="UTF-8"?>'
+        '<rss version="2.0"><channel>'
+        '<title>UMA Mercure</title>'
+        f'<link>{_esc(str(base_url))}</link>'
+        '<description>Radio personal UMA Mercure</description>'
+        f'<item><title>{_esc(label)}</title>'
+        f'<description>{_esc(desc)}</description>'
+        '<guid>uma-current</guid></item>'
+        '</channel></rss>'
+    )
+    return Response(content=xml, media_type="application/rss+xml")
+
 @app.get("/api/sessions")
 def sessions_list():
     return session_service.list_sessions()
@@ -353,6 +379,7 @@ async def chat_command(request: Request):
     logger.info(f"DEBUG: Mensaje de usuario: {user_message}")
 
     # 1. Extraer intención
+    intent: dict
     if user_message.startswith("FORM_ACTION:"):
         intent = payload.get("direct_params", {})
         if not isinstance(intent, dict):
@@ -361,6 +388,31 @@ async def chat_command(request: Request):
         intent = llm_agent.parse_intent(user_message)
 
     logger.info(f"DEBUG: Intención extraída: {intent}")
+
+    # Corrección flow: el modelo pequeño inventa criterios ante peticiones de
+    # "algo que encaje ahora". Si el mensaje habla de continuidad y no menciona
+    # un BPM explicito, se descarta el bpm alucinado (el genero se conserva).
+    if intent.get("action") == "smart_playlist" and not user_message.startswith("FORM_ACTION:"):
+        import re as _re
+        m = user_message.lower()
+        if _re.search(r"encaje|encaja|flow|sigue|siguiente|despu[eé]s|continu|ahora|sonando", m) \
+                and not _re.search(r"\d{2,3}\s*bpm|bpm\s*\d{2,3}", m):
+            params = intent.get("params") or {}
+            if not isinstance(params, dict):
+                params = {}
+            import unicodedata as _ud
+            def _acento(t):
+                t = _ud.normalize("NFD", t)
+                return "".join(c for c in t if c.isalnum() and not _ud.category(c).startswith("M"))
+            m_norm = _acento(m)
+            changed = params.pop("bpm", None) is not None
+            for campo in ("genre", "mood"):
+                v = params.get(campo)
+                if v and _acento(str(v)).lower() not in m_norm:
+                    params.pop(campo); changed = True
+            if changed:
+                intent["params"] = params
+                logger.info(f"DEBUG: criterios alucinados eliminados para peticion de flow: {intent}")
 
     # 2. Ejecutar acción mapeada
     action = intent.get("action", "")
@@ -406,16 +458,18 @@ async def chat_command(request: Request):
             mpd_service.set_volume(int(vol))
             response_msg = f"Volumen ajustado a {vol}%."
         elif action == "smart_playlist":
+            import random
             params = intent.get("params", {})
-            from sqlalchemy import create_engine, or_, func
+            from sqlalchemy import or_, func
             from sqlalchemy.orm import sessionmaker
-            from models.database import TrackMetadata, init_db
+            from models.database import TrackMetadata, make_engine
+            from services.dj_flow import current_track, taste_maps, played_today, rank_candidates
 
-            engine = create_engine(settings.DB_URL)
+            engine = make_engine(settings.DB_URL)
             Session = sessionmaker(bind=engine)
             session = Session()
 
-            query = session.query(TrackMetadata.file)
+            query = session.query(TrackMetadata)
             if params.get("genre"):
                 g = f"%{params['genre']}%"
                 query = query.filter(or_(
@@ -431,13 +485,25 @@ async def chat_command(request: Request):
                 ))
             if params.get("bpm"):
                 bpm = params["bpm"]
-                query = query.filter(TrackMetadata.bpm.between(bpm-15, bpm+15))
+                # ventana amplia: el scoring de flow decide el orden, no el filtro
+                query = query.filter(TrackMetadata.bpm.between(bpm-25, bpm+25))
 
             limit_val = intent.get("limit", 20)
-            results = query.order_by(TrackMetadata.play_count.asc(), func.random()).limit(limit_val).all()
+            pool = query.order_by(func.random()).limit(400).all()
 
-            if results:
-                n = session_service.load_playlist([r[0] for r in results], shuffle=True)
+            cur = current_track(engine)
+            if pool and cur and cur[3]:
+                taste = taste_maps(engine)
+                today = played_today(engine)
+                files = rank_candidates(cur, pool, taste, today, limit_val)
+                n = session_service.load_playlist(files, shuffle=False)
+                response_msg = (
+                    f"Flow DJ: {n} pistas ordenadas para encajar con "
+                    f"{cur[1] or '?'} - {cur[2] or cur[0]} (tempo y clave compatibles)."
+                )
+            elif pool:
+                scored = sorted(pool, key=lambda t: (t.play_count or 0) + random.uniform(0, 1))
+                n = session_service.load_playlist([t.file for t in scored[:limit_val]], shuffle=False)
                 response_msg = f"Lista de {n} canciones cargada y sonando (priorizando temas menos escuchados)."
             else:
                 response_msg = "No encontré nada que encaje exactamente con esos parámetros en la biblioteca."
