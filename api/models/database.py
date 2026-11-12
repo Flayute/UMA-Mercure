@@ -33,6 +33,9 @@ class TrackMetadata(Base):
     play_count = Column(Integer, default=0)
     last_played = Column(String) # ISO date string
     duration = Column(Float)      # segundos; rellenado por scripts/fill_durations.py
+    description = Column(String)  # 2-3 frases reales del ARTISTA (enriquecimiento LLM, nunca por track)
+    keywords = Column(String)     # etiquetas de subgénero/escena para la caza de canciones
+    bpm_source = Column(String)   # procedencia del bpm: mixxx | ffmpeg | manual | filename
 
 class RadioQueue(Base):
     __tablename__ = 'radio_queue'
@@ -79,3 +82,11 @@ def init_db():
     return engine
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False)
+
+
+class FxQueue(Base):
+    """Cola separada de packs de efectos/SFX (la puebla scripts/uma_fx.py)."""
+    __tablename__ = "fx_queue"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    file = Column(String, unique=True)
+

@@ -115,12 +115,16 @@ def get_library(q: str = None, limit: int = 200, offset: int = 0):
             TrackMetadata.album.ilike(like),
             TrackMetadata.genre.ilike(like),
             TrackMetadata.mood.ilike(like),
+            TrackMetadata.keywords.ilike(like),
+            TrackMetadata.description.ilike(like),
             TrackMetadata.file.ilike(like),
         ))
     rows = query.order_by(TrackMetadata.artist.asc()).offset(offset).limit(min(limit, 2000)).all()
     result = [{
         "file": r.file, "artist": r.artist, "title": r.title, "album": r.album,
-        "genre": r.genre, "bpm": r.bpm, "mood": r.mood, "play_count": r.play_count or 0,
+        "genre": r.genre, "bpm": r.bpm, "musical_key": r.musical_key, "bpm_source": r.bpm_source,
+        "mood": r.mood, "play_count": r.play_count or 0, "duration": r.duration,
+        "description": r.description, "keywords": r.keywords,
     } for r in rows]
     session.close()
     return result
@@ -263,8 +267,8 @@ def sessions_list():
     return session_service.list_sessions()
 
 @app.get("/api/session/queue")
-def session_queue(sid: str = "main", limit: int = 200):
-    return session_service.queue_view(_sid(sid), limit=min(2000, max(1, limit)))
+def session_queue(sid: str = "main", limit: int = 200, offset: int = 0):
+    return session_service.queue_view(_sid(sid), limit=min(2000, max(1, limit)), offset=max(0, offset))
 
 @app.post("/api/session/fork")
 def session_fork(sid: str = "main"):
@@ -368,6 +372,39 @@ def stream_file(file: str):
 
 # ── ENDPOINT DE IA (Lenguaje Natural → Acción) ──────────────
 
+def _criterios_del_mensaje(msg: str) -> dict:
+    """Lee cantidad y BPM directamente del texto del usuario. El modelo pequeno
+    alucina bpm/mood y no siempre devuelve 'limit', asi que el texto manda."""
+    import re as _re
+    import unicodedata as _ud
+    m = _ud.normalize("NFD", (msg or "").lower())
+    m = "".join(c for c in m if c.isalnum() or c in " -:")
+    m = _ud.normalize("NFC", m)
+    out = {}
+    mc = _re.search(r"(\d{1,3})\s*(?:canciones|cancion|temas|tema|pistas|pista|tracks|piezas)", m)
+    if not mc:
+        mc = _re.search(r"unas?\s+(\d{1,3})", m)
+    if mc:
+        out["limit"] = max(1, min(400, int(mc.group(1))))
+    mr = _re.search(r"(\d{2,3})\s*(?:y|a|-|al)\s*(\d{2,3})\s*(?:bpm|pulsaciones|golpes)", m)
+    if not mr:
+        mr = _re.search(r"entre\s+(\d{2,3})\s+y\s+(\d{2,3})", m)
+    if mr:
+        lo, hi = sorted((int(mr.group(1)), int(mr.group(2))))
+        out["bpm_min"], out["bpm_max"] = lo, hi
+    else:
+        mb = _re.search(r"(\d{2,3})\s*(?:bpm|pulsaciones|golpes)", m)
+        if mb:
+            out["bpm"] = int(mb.group(1))
+    return out
+
+
+@app.get("/api/session/fx_queue")
+def session_fx_queue():
+    """Cola de efectos/SFX (packs de libreria) separada de la musica."""
+    return {"files": session_service.fx_queue()}
+
+
 @app.post("/api/chat")
 async def chat_command(request: Request):
     try:
@@ -375,6 +412,7 @@ async def chat_command(request: Request):
     except Exception:
         return JSONResponse({"message": "Invalid JSON"}, status_code=400)
 
+    chat_sid = _sid(payload.get("sid") if isinstance(payload.get("sid"), str) else "main")
     user_message = payload.get("message", "")
     logger.info(f"DEBUG: Mensaje de usuario: {user_message}")
 
@@ -420,20 +458,20 @@ async def chat_command(request: Request):
 
     try:
         if action == "play":
-            session_service.play()
+            session_service.play(chat_sid)
             response_msg = "▶️ Reproducción iniciada."
         elif action == "pause":
-            session_service.pause()
+            session_service.pause(chat_sid)
             response_msg = "⏸️ Música pausada."
         elif action == "stop":
-            session_service.stop()
+            session_service.stop(chat_sid)
             response_msg = "⏹️ Reproducción detenida."
         elif action == "next":
-            session_service.next()
+            session_service.next(chat_sid)
             response_msg = "⏭️ Siguiente pista."
         elif action == "previous":
-            idx = session_service.snapshot()["queue_index"]
-            session_service.play_index(max(0, idx - 1))
+            idx = session_service.snapshot(chat_sid)["queue_index"]
+            session_service.play_index(max(0, idx - 1), chat_sid)
             response_msg = "⏮️ Pista anterior."
         elif action == "play_target":
             target = intent.get("target", "")
@@ -448,7 +486,7 @@ async def chat_command(request: Request):
                 TrackMetadata.title.ilike(like),
             )).first()
             if hit:
-                session_service.play_file(hit.file)
+                session_service.play_file(hit.file, chat_sid)
                 response_msg = f"Reproduciendo: {hit.artist or '?'} - {hit.title or hit.file}"
             else:
                 response_msg = f"No encontré '{target}' en la biblioteca local."
@@ -460,6 +498,25 @@ async def chat_command(request: Request):
         elif action == "smart_playlist":
             import random
             params = intent.get("params", {})
+            if not isinstance(params, dict):
+                params = {}
+            if not user_message.startswith("FORM_ACTION:"):
+                # el texto del usuario manda sobre lo que el modelo invento
+                detectados = _criterios_del_mensaje(user_message)
+                for clave in ("bpm", "bpm_min", "bpm_max"):
+                    if clave not in detectados:
+                        params.pop(clave, None)
+                        intent.pop("limit", None)
+                params.update(detectados)
+                import unicodedata as _ud2
+                def _sin_acento(t):
+                    t = _ud2.normalize("NFD", str(t).lower())
+                    return "".join(c for c in t if c.isalnum() and not _ud2.category(c).startswith("M"))
+                msg_norm = _sin_acento(user_message)
+                if params.get("mood") and _sin_acento(params["mood"]) not in msg_norm:
+                    params.pop("mood")
+                intent["params"] = params
+                logger.info(f"DEBUG: criterios normalizados: {intent}")
             from sqlalchemy import or_, func
             from sqlalchemy.orm import sessionmaker
             from models.database import TrackMetadata, make_engine
@@ -470,41 +527,77 @@ async def chat_command(request: Request):
             session = Session()
 
             query = session.query(TrackMetadata)
-            if params.get("genre"):
-                g = f"%{params['genre']}%"
-                query = query.filter(or_(
-                    TrackMetadata.genre.ilike(g),
-                    TrackMetadata.mood.ilike(g),
-                    TrackMetadata.file.ilike(g)
-                ))
-            if params.get("mood"):
-                m = f"%{params['mood']}%"
-                query = query.filter(or_(
-                    TrackMetadata.mood.ilike(m),
-                    TrackMetadata.file.ilike(m)
-                ))
-            if params.get("bpm"):
+            # genero y mood van en UN solo OR: si se filtran en AND, un mood que no
+            # existe como tag vacia la lista (pasaba con 'trip hop relajado')
+            estilos = [v for v in (params.get("genre"), params.get("mood")) if v]
+            if estilos:
+                conds = []
+                for v in estilos:
+                    like = f"%{v}%"
+                    conds += [
+                        TrackMetadata.genre.ilike(like),
+                        TrackMetadata.mood.ilike(like),
+                        TrackMetadata.file.ilike(like),
+                        TrackMetadata.keywords.ilike(like),
+                        TrackMetadata.description.ilike(like),
+                    ]
+                query = query.filter(or_(*conds))
+            if params.get("bpm_min") or params.get("bpm_max"):
+                lo = params.get("bpm_min") or 0
+                hi = params.get("bpm_max") or 999
+                try:
+                    query = query.filter(TrackMetadata.bpm.between(float(lo) - 2, float(hi) + 2))
+                except (TypeError, ValueError):
+                    pass
+            elif params.get("bpm"):
                 bpm = params["bpm"]
                 # ventana amplia: el scoring de flow decide el orden, no el filtro
                 query = query.filter(TrackMetadata.bpm.between(bpm-25, bpm+25))
 
-            limit_val = intent.get("limit", 20)
-            pool = query.order_by(func.random()).limit(400).all()
+            raw_limit = params.get("limit") or intent.get("limit") or 20
+            try:
+                limit_val = max(1, min(400, int(float(raw_limit))))
+            except (TypeError, ValueError):
+                limit_val = 20
+            pool = query.order_by(func.random()).limit(max(400, limit_val * 4)).all()
+
+            # fuera los packs de samples/SFX: no son canciones, contaminan las listas
+            import re as _re_sfx
+            patron_sfx = _re_sfx.compile(
+                r"(SDU_|_FX_|FX_Loop|_Loop_|one_shot|Samples?/|Loops?/|Stems?/|_BPM|_bpm)", _re_sfx.I)
+            def _es_sample(t):
+                # pack de samples/SFX: el patron de fichero solo descarta si ademas
+                # no tiene nombre de artista o dura como un loop (<2 min). asi una
+                # cancion real guardada en una carpeta 'Samples' se conserva.
+                art = (t.artist or "").strip().lower()
+                sin_nombre = (not art) or art in ("desconocido", "unknown", "n/a", "va", "various artists")
+                corta = (t.duration or 0) < 120
+                if patron_sfx.search(t.file or ""):
+                    return sin_nombre or corta
+                return sin_nombre and (t.duration or 0) < 100
+            pool = [t for t in pool if not _es_sample(t)]
 
             cur = current_track(engine)
             if pool and cur and cur[3]:
                 taste = taste_maps(engine)
                 today = played_today(engine)
                 files = rank_candidates(cur, pool, taste, today, limit_val)
-                n = session_service.load_playlist(files, shuffle=False)
-                response_msg = (
-                    f"Flow DJ: {n} pistas ordenadas para encajar con "
-                    f"{cur[1] or '?'} - {cur[2] or cur[0]} (tempo y clave compatibles)."
-                )
+                n = session_service.load_playlist(files, shuffle=False, sid=chat_sid)
+                if estilos:
+                    response_msg = (
+                        f"Lista de {n} canciones de {' / '.join(estilos)}, ordenadas para "
+                        f"encajar con {cur[1] or '?'} - {cur[2] or cur[0]} (tempo y clave compatibles)."
+                    )
+                else:
+                    response_msg = (
+                        f"Flow DJ: {n} pistas ordenadas para encajar con "
+                        f"{cur[1] or '?'} - {cur[2] or cur[0]} (tempo y clave compatibles)."
+                    )
             elif pool:
                 scored = sorted(pool, key=lambda t: (t.play_count or 0) + random.uniform(0, 1))
-                n = session_service.load_playlist([t.file for t in scored[:limit_val]], shuffle=False)
-                response_msg = f"Lista de {n} canciones cargada y sonando (priorizando temas menos escuchados)."
+                n = session_service.load_playlist([t.file for t in scored[:limit_val]], shuffle=False, sid=chat_sid)
+                estilo = params.get("genre") or params.get("mood") or "tus criterios"
+                response_msg = f"Lista de {n} canciones de {estilo} cargada y sonando (priorizando temas menos escuchados)."
             else:
                 response_msg = "No encontré nada que encaje exactamente con esos parámetros en la biblioteca."
             session.close()

@@ -11,11 +11,15 @@ import secrets
 import time
 from datetime import datetime
 
-from sqlalchemy import func
+from sqlalchemy import func, text
+
+_FX_TABLE_SQL = text("SELECT name FROM sqlite_master WHERE type='table' AND name='fx_queue'")
+_FX_IDS_SQL = text("SELECT id FROM fx_queue")
+_FX_FILES_SQL = text("SELECT file FROM fx_queue ORDER BY id")
 from sqlalchemy.orm import sessionmaker
 
 from core.config import settings
-from models.database import TrackMetadata, RadioQueue, SessionState
+from models.database import TrackMetadata, RadioQueue, SessionState, FxQueue
 
 logger = logging.getLogger("uvicorn.error")  # para que el journal vea info/warning
 
@@ -72,6 +76,11 @@ class SessionService:
             "queue_len": total,
             "shuffle": bool(row.shuffle),
             "repeat": bool(row.repeat),
+            # datos enriquecidos de la pista (para el widget nativo y la PWA)
+            "bpm": track.bpm if track else None,
+            "bpm_source": track.bpm_source if track else None,
+            "musical_key": track.musical_key if track else None,
+            "genre": track.genre if track else None,
         }
         s.close()
         return snap
@@ -94,13 +103,13 @@ class SessionService:
         s.close()
         return {"sessions": out}
 
-    def queue_view(self, sid=DEFAULT, limit=200):
+    def queue_view(self, sid=DEFAULT, limit=200, offset=0):
         s = self.Session()
         row = self._row(s, sid)
         rows = (s.query(RadioQueue, TrackMetadata)
                 .outerjoin(TrackMetadata, RadioQueue.file == TrackMetadata.file)
                 .filter(RadioQueue.sid == sid)
-                .order_by(RadioQueue.pos).limit(limit).all())
+                .order_by(RadioQueue.pos).offset(max(0, offset)).limit(limit).all())
         items = [{"index": r0.pos, "file": r0.file,
                   "artist": tm.artist if tm else None,
                   "title": tm.title if tm else None} for r0, tm in rows]
@@ -139,7 +148,12 @@ class SessionService:
 
     def shuffle_all(self, sid=DEFAULT):
         s = self.Session()
-        files = [r[0] for r in s.query(TrackMetadata.file).order_by(func.random()).all()]
+        # los packs de efectos/SFX viven en su propia cola (fx_queue), no en la radio comun.
+        # Se excluye por fichero: fx_queue.id es su propio autoincrement, no el de track_metadata.
+        q = s.query(TrackMetadata.file).order_by(func.random())
+        if self.fx_enabled():
+            q = q.filter(~TrackMetadata.file.in_(s.query(FxQueue.file)))
+        files = [r[0] for r in q.all()]
         random.shuffle(files)
         row = self._row(s, sid)
         self._set_queue(s, sid, files)
@@ -151,6 +165,43 @@ class SessionService:
         s.commit()
         s.close()
         return len(files)
+
+    def _fx_engine(self):
+        """Engine raw aparte: fx_queue es una tabla auxiliar sin modelo ORM."""
+        from models.database import make_engine
+        eng = getattr(self, "_fx_engine_cache", None)
+        if eng is None:
+            eng = make_engine(settings.DB_URL)
+            self._fx_engine_cache = eng
+        return eng
+
+    def fx_enabled(self):
+        try:
+            with self._fx_engine().connect() as conn:
+                return conn.execute(_FX_TABLE_SQL).fetchone() is not None
+        except Exception as exc:
+            logger.warning("fx_enabled: %s", exc)
+            return False
+
+    def fx_ids(self):
+        if not self.fx_enabled():
+            return []
+        try:
+            with self._fx_engine().connect() as conn:
+                return [r[0] for r in conn.execute(_FX_IDS_SQL).fetchall()]
+        except Exception as exc:
+            logger.warning("fx_ids: %s", exc)
+            return []
+
+    def fx_queue(self):
+        if not self.fx_enabled():
+            return []
+        try:
+            with self._fx_engine().connect() as conn:
+                return [r[0] for r in conn.execute(_FX_FILES_SQL).fetchall()]
+        except Exception as exc:
+            logger.warning("fx_queue: %s", exc)
+            return []
 
     def load_playlist(self, files, shuffle=False, sid=DEFAULT):
         """Cola nueva desde resultados (smart_playlist) y reproduce."""
