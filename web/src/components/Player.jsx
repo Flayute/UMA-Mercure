@@ -19,6 +19,13 @@ export default function Player({ status, current, connected, sid = 'main', onSid
   const title = current?.title || 'Sin reproducción'
   const artist = current?.artist || '—'
   const [vol, setVol] = useState(() => Number(localStorage.getItem('uma-volume') ?? '0.8'))
+  // El navegador bloquea el primer play() (política de autoplay): lo detectamos y
+  // ofrecemos un botón grande en vez de dejar la UI diciendo "Sonando" en silencio.
+  const [needsGesture, setNeedsGesture] = useState(false)
+  const tryPlay = (el) => {
+    if (!el || !el.src) return
+    el.play().then(() => setNeedsGesture(false)).catch(() => setNeedsGesture(true))
+  }
 
   // La pista actual se carga como archivo directo (HTTP Range → seek instantáneo)
   useEffect(() => {
@@ -42,24 +49,28 @@ export default function Player({ status, current, connected, sid = 'main', onSid
         })
       }
     }
-    if (isPlaying) el.play().catch(() => {})
+    if (isPlaying) tryPlay(el)
   }, [current?.file])
 
   // Sincronizar play/pause y corregir deriva contra el reloj del servidor.
   // Ojo: hacer play() sobre un <audio> en estado 'ended' REINICIA la pista —
-  // por eso el guard de ended.
+  // por eso el guard de ended. Mientras el navegador tenga pendiente el gesto de
+  // autoplay (needsGesture) NO reintentamos ni buscamos: evitar el bucle de
+  // rechazo y el falso avance de currentTime.
   useEffect(() => {
     const el = audioRef.current
-    if (!el || !el.src) return
+    if (!el || !el.src || needsGesture) return
     if (isPlaying) {
       if (!el.ended) {
-        el.play().catch(() => {})
-        if (Math.abs(el.currentTime - position) > 1.5) el.currentTime = position
+        tryPlay(el)
+        // Solo buscamos cuando el navegador ya conoce el media: buscar con
+        // readyState 0 (autoplay bloqueado) deja el elemento atascado.
+        if (el.readyState >= 1 && Math.abs(el.currentTime - position) > 1.5) el.currentTime = position
       }
     } else {
       el.pause()
     }
-  }, [isPlaying, position])
+  }, [isPlaying, position, needsGesture])
 
   // La pista terminó en el navegador antes que el reloj del servidor (duration
   // fallback o deriva): pide el salto. Si el servidor ya ve la pista terminada,
@@ -122,7 +133,7 @@ export default function Player({ status, current, connected, sid = 'main', onSid
   useEffect(() => {
     const unlock = () => {
       const el = audioRef.current
-      if (el && isPlaying && el.src) el.play().catch(() => {})
+      if (el && isPlaying && el.src) tryPlay(el)
     }
     window.addEventListener('pointerdown', unlock)
     return () => window.removeEventListener('pointerdown', unlock)
@@ -178,13 +189,27 @@ export default function Player({ status, current, connected, sid = 'main', onSid
             <button style={{ background: 'var(--bg-card)', border: '1px solid var(--border)', color: 'var(--text-primary)', borderRadius: '100px', padding: '6px 12px', fontSize: '0.72rem', cursor: 'pointer', whiteSpace: 'nowrap', flex: 'none' }} onClick={fork} title="Crea una reproducción independiente para este dispositivo: copia la cola actual y a partir de ahí nadie te cambia la música">Crear sesión propia</button>
           )}
           <div className="status-badge">
-            <span className={`status-dot ${isPlaying ? '' : 'offline'}`} />
-            {isPlaying ? 'Sonando' : 'En pausa'}
+            <span className={`status-dot ${isPlaying && !needsGesture ? '' : 'offline'}`} />
+            {needsGesture && isPlaying ? 'Toca para sonar' : isPlaying ? 'Sonando' : 'En pausa'}
           </div>
         </div>
       </div>
 
       <div className="now-playing">
+        {needsGesture && isPlaying && (
+          <button
+            onClick={() => tryPlay(audioRef.current)}
+            title="El navegador no deja sonar solo: un clic y arranca la radio"
+            style={{
+              position: 'absolute', inset: 0, zIndex: 5, cursor: 'pointer',
+              background: 'rgba(10,12,16,0.72)', color: 'var(--text-primary)',
+              border: '1px solid var(--accent)', borderRadius: 12,
+              fontSize: '1rem', fontWeight: 600, letterSpacing: '0.02em',
+            }}
+          >
+            ▶ Sonar
+          </button>
+        )}
         <div className={`album-art ${isPlaying ? 'playing' : ''}`}>
           ♪
         </div>
