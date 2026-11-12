@@ -22,3 +22,9 @@ data/.hdd_state
 
 # Handoffs internos (no publicar)
 HANDOFF-*.md
+
+# Artefactos de trabajo locales (colas, logs, progreso)
+data/
+data/.enrich-lote3-candidates/
+android/out/
+*.apk

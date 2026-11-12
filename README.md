@@ -8,6 +8,9 @@ instalable en Android.
 
 Repo: https://github.com/Flayute/UMA-Mercure.git
 
+Estado y números reales de la fonoteca: `docs/estado-2026-11.md`.
+Auditoría (solo lectura) de la base: `docs/auditoria-fonoteca-2026-11.md`.
+
 ![Dashboard de UMA Mercure](docs/screenshot.png)
 
 ## Qué es y qué no es
@@ -39,6 +42,12 @@ Qwen 3.8 Flash Next, a través del motor Strata, se ha encargado de darle la
 vuelta al código y convertirlo en lo que es ahora: la arquitectura de sesión
 directa, las sesiones independientes, el streaming con Range, la PWA y la
 documentación actual.
+Otras piezas (barridos de BPM, separación de efectos, app nativa Android,
+enriquecimiento y auditoría de metadatos) salieron de agentes Hermes con modelos
+locales y remotos, siempre sobre backups y con verificación después de cada lote.
+El criterio, la fonoteca, la curaduría y las decisiones de producto son humanas:
+los agentes escriben el código, pero cada regla dura —no inventar metadatos, no
+borrar, no tocar lo que suena, `main` es el master— la definió Alex Orsi.
 
 ## Cómo funciona
 
@@ -61,7 +70,14 @@ UMA-Mercure/
 ├── web/          # React + vite (fuente en src/, build en dist/, servido por FastAPI)
 ├── scripts/      # regen_db.py, fill_durations.py, hdd_watcher.sh, import_legacy_db.py,
 │                 # analyze_library.py (analizador masivo BPM/clave/energía),
-│                 # fix_artist_title.py (repara artista/título cruzados)
+│                 # fix_artist_title.py (repara artista/título cruzados),
+│                 # ingest_mixxx.py (BPM/clave/género/historial desde Mixxx),
+│                 # bpm_sweep.py (barrido librosa a baja prioridad),
+│                 # fx_split.py (efectos/SFX fuera de la radio común),
+│                 # clean_artist_aliases.py (renombrado conservador de artist),
+│                 # genre_probe_itunes.py (piloto de género vía iTunes Search)
+├── android/      # app nativa Android (mando a distancia; build sin Gradle)
+├── docs/         # estado de la fonoteca, auditoría de metadatos, captura
 ├── data/         # uma.db (SQLite WAL) — no versionado, se regenera
 └── deploy/       # units systemd de ejemplo
 ```
@@ -195,7 +211,7 @@ Abre `http://<maquina>:8000/` (local) o la URL HTTPS del tailnet.
 | Crear sesión propia | Bifurca una sesión independiente para este dispositivo: copia la cola y la posición; nadie más afecta a lo que escuchas. "Volver a la radio común" te devuelve a `main`. |
 | Catálogo | Búsqueda sobre el catálogo SQLite; clic en una fila la reproduce; "+ cola" añade una pista; "A la cola (N)" añade las pistas cargadas; "Radio completa" pone toda la biblioteca en aleatorio. |
 | Cola de Reproducción | La cola de tu sesión; clic en una fila para saltar a esa pista. |
-| DJ Inteligente | Chat con el LLM: "pon X", "siguiente", "pausa", "playlist de N temas <género>", "radio completa". Opera sobre la sesión común `main`. |
+| DJ Inteligente | Chat con el LLM: "pon X", "siguiente", "pausa", "crea una lista de 50 canciones de dub", "deep house entre 118 y 124". La cantidad y el rango de BPM se leen del texto del usuario, no del modelo. Escribe en la sesión en la que estés (`main` por defecto). |
 | Generador de Listas | Formulario por Nº de canciones / género / BPM / novedad; prioriza temas poco escuchados. |
 | Visor de Razonamiento | Respuestas y propuestas del DJ de IA. |
 | Estadísticas | Totales, temas más reproducidos, estado del disco. |
@@ -204,6 +220,24 @@ PWA en Android: abre la URL HTTPS en Chrome o Firefox ≥136 → menú →
 "Instalar aplicación / Instalar". Con MediaSession, la pista sigue sonando con
 la pantalla bloqueada en navegadores que lo permiten (en Firefox Android activa
 el permiso de sitio "Reproducción en segundo plano").
+
+### App nativa Android (mando a distancia)
+
+Además de la PWA hay una app nativa en `android/`: control de la radio común,
+cola con ventana alrededor de la pista actual, búsqueda que añade a la cola,
+pestaña DJ, y reproducción en segundo plano con notificación y botones de
+auriculares. Se construye sin Gradle ni Android Studio (`aapt2` → `javac` → `d8`
+→ `zipalign` → `apksigner`); ver `android/README.md`. Telegram no deja descargar
+`.apk`, así que se sirve desde la propia radio:
+
+```bash
+cp android/out/uma-radio.apk web/dist/uma-radio.apk
+# en el movil: http://<maquina>:8000/uma-radio.apk
+```
+
+`main` es el master: la app manda el transporte a la sesión en la que estés y
+solo bifurca si pulsas «Crear sesión propia» — pensado para compartir la app sin
+que nadie rebaraje tu radio.
 
 Códecs: mp3/flac/ogg/opus/m4a suenan nativos en el navegador; wma/ape/wv los
 transcode la API a MP3 al vuelo (sin seek en esos archivos). Pista ilegible o
@@ -221,7 +255,30 @@ corrupta: el reproductor la salta automáticamente.
 | `GET /api/sessions` | sesiones activas |
 | `GET /api/music/stream?file=...` | audio con Range; rutas fuera de MUSIC_DIR → 400 |
 | `WS /ws/status?sid=` | snapshot de sesión cada segundo |
-| `POST /api/chat {message}` | DJ de IA (intents → sesión) |
+| `POST /api/chat {message, sid?}` | DJ de IA (intents → sesión); sin `sid` opera en `main` |
+| `GET /api/session/fx_queue` | ficheros de efectos/SFX excluidos de la radio común |
+| `GET /api/session/queue?sid=&offset=&limit=` | ventana de la cola alrededor de la pista actual |
+
+## Metadatos: qué hay, qué falta y qué no se puede sacar
+
+`docs/estado-2026-11.md` trae los números medidos y `docs/auditoria-fonoteca-2026-11.md`
+la auditoría en solo lectura. Resumen honesto:
+
+- **BPM**: 84% con valor real (librosa / tags / Mixxx); el origen queda en
+  `bpm_source`.
+- **Clave musical**: 37%. Solo se cierra analizando ficheros, no desde APIs.
+- **Género**: 43%, el hueco más incómodo. Las fuentes gratuitas medidas (iTunes
+  Search, Deezer público, MusicBrainz, Last.fm sin key) no dan subgéneros útiles
+  para underground autoeditado: iTunes casa ~76% de una muestra pero devuelve
+  «Electronic»; MusicBrainz sí da subgéneros a nivel de **artista** (1 req/s, y
+  503 si aceleras). Shazam no tiene API pública (ShazamKit exige Apple Developer
+  Program) y su taxonomía es igual de gruesa. Plan realista: tags de MusicBrainz
+  por artista en una columna `genre_mb` aparte, sin pisar el género existente.
+- **Bios de artista**: ~1.709 artistas con descripción; el resto del underground
+  se quedó vacío a propósito. Regla dura: una biografía inventada contamina la
+  radio.
+- **Efectos/SFX**: 2.331 packs viven en `fx_queue` y quedan fuera del barajado y
+  de las listas del DJ. No se borra nada de `track_metadata`.
 
 ## Solución de problemas
 
