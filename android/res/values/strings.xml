@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">UMA Radio</string>
-    <string name="default_url">http://192.168.1.100:8000</string>
+    <string name="default_url">http://192.0.2.100:8000</string>
 </resources>
